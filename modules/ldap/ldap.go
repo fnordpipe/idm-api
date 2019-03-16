@@ -35,14 +35,14 @@ type Tree struct {
   Ls *Source
 }
 
-func connect(ls *Source) (*ldap.Conn, error) {
+func connect(ls *Source, dn, password string) (*ldap.Conn, error) {
   fmt.Fprintf(os.Stdout, "Connecting to LDAP server %s:%d\n", ls.Host, ls.Port)
   c, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", ls.Host, ls.Port))
   if err != nil {
     return nil, err
   }
 
-  err = c.Bind(ls.BindDN, ls.BindPassword)
+  err = c.Bind(dn, password)
   return c, err
 }
 
@@ -62,12 +62,59 @@ func createPassword(password string) string {
   return fmt.Sprintf("{CRYPT}%s", hash)
 }
 
+func (t *Tree) ChangePassword(username, password, old string) error {
+  dn := fmt.Sprintf("%s=%s,%s", t.AttributeUsername, username, t.Base)
+  l, err := connect(t.Ls, dn, old)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "%v\n", err)
+    return err
+  }
+  defer l.Close()
+
+  mr := ldap.NewModifyRequest(dn, nil)
+  mr.Replace(t.AttributePassword, []string{createPassword(password)})
+
+  fmt.Fprintf(os.Stdout, "Changing Password for %s\n", username)
+  err = l.Modify(mr)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "%v\n", err)
+    return err
+  }
+
+  return nil
+}
+
+func (t *Tree) CreateAccount(account Account) error {
+  l, err := connect(t.Ls, t.Ls.BindDN, t.Ls.BindPassword)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "%v\n", err)
+    return err
+  }
+  defer l.Close()
+
+  dn := fmt.Sprintf("%s=%s,%s", t.AttributeUsername, account.Username, t.Base)
+  ar := ldap.NewAddRequest(dn, nil)
+  ar.Attribute("objectClass", []string{"inetOrgPerson", "organizationalPerson", "person", "top"})
+  ar.Attribute(t.AttributeCommonName, []string{account.CommonName})
+  ar.Attribute(t.AttributeSurname, []string{account.Surname})
+  ar.Attribute(t.AttributeUsername, []string{account.Username})
+  ar.Attribute(t.AttributePassword, []string{createPassword(account.Password)})
+
+  fmt.Fprintf(os.Stdout, "Creating account %s in %s\n", account.Username, t.Base)
+  err = l.Add(ar)
+  if err != nil {
+    return err
+  }
+
+  return nil
+}
+
 func (t *Tree) SearchAccount(username string) (Account, error) {
   var account Account
 
-  l, err := connect(t.Ls)
+  l, err := connect(t.Ls, t.Ls.BindDN, t.Ls.BindPassword)
   if err != nil {
-    fmt.Fprintf(os.Stderr, "%v", err)
+    fmt.Fprintf(os.Stderr, "%v\n", err)
     return account, err
   }
   defer l.Close()
@@ -97,29 +144,4 @@ func (t *Tree) SearchAccount(username string) (Account, error) {
   }
 
   return account, nil
-}
-
-func (t *Tree) CreateAccount(account Account) error {
-  l, err := connect(t.Ls)
-  if err != nil {
-    fmt.Fprintf(os.Stderr, "%v", err)
-    return err
-  }
-  defer l.Close()
-
-  dn := fmt.Sprintf("%s=%s,%s", t.AttributeUsername, account.Username, t.Base)
-  ar := ldap.NewAddRequest(dn, nil)
-  ar.Attribute("objectClass", []string{"inetOrgPerson", "organizationalPerson", "person", "top"})
-  ar.Attribute(t.AttributeCommonName, []string{account.CommonName})
-  ar.Attribute(t.AttributeSurname, []string{account.Surname})
-  ar.Attribute(t.AttributeUsername, []string{account.Username})
-  ar.Attribute(t.AttributePassword, []string{createPassword(account.Password)})
-
-  fmt.Fprintf(os.Stdout, "Creating account %s in %s\n", account.Username, t.Base)
-  err = l.Add(ar)
-  if err != nil {
-    return err
-  }
-
-  return nil
 }

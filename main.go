@@ -28,6 +28,40 @@ type JsonAccountResponse struct {
   Surname bool `json:"surname"`
 }
 
+type JsonPassword struct {
+  NewPassword string `json:"new,omitempty"`
+  RepeatPassword string `json:"repeat,omitempty"`
+  OldPassword string `json:"old,omitempty"`
+}
+
+func ChangePassword(w http.ResponseWriter, r *http.Request) {
+  var passwords JsonPassword
+  params := mux.Vars(r)
+  _ = json.NewDecoder(r.Body).Decode(&passwords)
+
+  if passwords.OldPassword == "" || passwords.NewPassword == "" ||
+     passwords.NewPassword != passwords.RepeatPassword {
+    w.WriteHeader(http.StatusBadRequest)
+    return
+  }
+
+  _, err := tree.SearchAccount(params["username"])
+  if err == nil {
+    err = tree.ChangePassword(
+      params["username"],
+      passwords.NewPassword, passwords.OldPassword)
+    if err != nil {
+      w.WriteHeader(http.StatusForbidden)
+      return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    return
+  }
+
+  w.WriteHeader(http.StatusNotFound)
+}
+
 func CreateAccount(w http.ResponseWriter, r *http.Request) {
   var account JsonAccount
   var ar = JsonAccountResponse{true, true, true}
@@ -108,6 +142,7 @@ func main() {
 
   router := mux.NewRouter()
   router.HandleFunc("/account", CreateAccount).Methods("POST")
+  router.HandleFunc("/account/{username}/password", ChangePassword).Methods("POST")
 
   log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%d", host, port), router))
 }
